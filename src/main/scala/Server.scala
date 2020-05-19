@@ -1,6 +1,5 @@
 import cats.data.Kleisli
-import cats.effect.{ConcurrentEffect, ExitCode, IO, IOApp, Resource, Sync, Timer}
-import cats.implicits._
+import cats.effect.{Bracket, ConcurrentEffect, ExitCode, IO, IOApp, Resource, Sync, Timer}
 import com.ovoenergy.effect.natchez.http4s.server.{Configuration, TraceMiddleware}
 import io.jaegertracing.Configuration.{ReporterConfiguration, SamplerConfiguration}
 import natchez._
@@ -15,7 +14,7 @@ object Main extends IOApp {
   override def run(args: List[String]): IO[ExitCode] = new Server[IO].run
 }
 
-class Server[F[_] : ConcurrentEffect : Timer] extends Http4sDsl[F] {
+class Server[F[_] : ConcurrentEffect : Timer: Bracket[*[_], Throwable]: Trace] extends Http4sDsl[F] {
 
   def routes: HttpRoutes[F] = Router(
     "/foo" -> HttpRoutes.of[F] { case POST -> Root => Ok("foo") }
