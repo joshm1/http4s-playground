@@ -50,13 +50,13 @@ class Server {
   def getTransactor[F[_]: Sync]: Resource[F, Transactor[Kleisli[F, Span[F], *]]] =
     Resource.make(Sync[F].pure(new Transactor[Kleisli[F, Span[F], *]] {}))(_ => Sync[F].unit)
 
-  def getEndpoints[F[_]: Sync: Trace](xa: Transactor[F]): Endpoints[F] =
+  def getEndpoints[F[_]: Sync](xa: Transactor[F]): Endpoints[F] =
     new Endpoints[F](
       new FooHttpEndpoint[F](xa),
       new BarHttpEndpoint[F](xa)
     )
 
-  def app[F[_]: Sync: Bracket[*[_], Throwable]](ep: EntryPoint[F], xa: Transactor[Kleisli[F, Span[F], *]]): HttpApp[F] = {
+  def app[F[_]: Sync](ep: EntryPoint[F], xa: Transactor[Kleisli[F, Span[F], *]]): HttpApp[F] = {
     val endpoints = getEndpoints(xa)
 
     // here you're creating the routes with the effect type being Kleisli[F, Span[F], *] so you
