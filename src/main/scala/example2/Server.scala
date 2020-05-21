@@ -52,15 +52,40 @@ class Server {
     for {
       b <- Blocker[F]
       xa <- doobie.fakeTransactor[Kleisli[F, Span[F], *]](b)
+      /*
+      Error:(54, 10) type mismatch;
+      found   : cats.effect.Resource[[x]cats.data.Kleisli[F,natchez.Span[F],x],example2.doobie.Transactor[[γ$1$]cats.data.Kleisli[F,natchez.Span[F],γ$1$]]]
+      required: cats.effect.Resource[[_]F[_],example2.doobie.Transactor[[γ$0$]cats.data.Kleisli[F,natchez.Span[F],γ$0$]]]
+       */
     } yield xa
 
   def app[F[_]: Sync](ep: EntryPoint[F], xa: Transactor[Kleisli[F, Span[F], *]]): HttpApp[F] = {
     val fooRepo: FooRepo[Kleisli[F, Span[F], *]] = new FooRepo[F](xa)
+    /*
+    Error:(58, 67) type mismatch;
+    found   : example2.doobie.Transactor[[γ$2$]cats.data.Kleisli[F,natchez.Span[F],γ$2$]]
+    required: example2.doobie.Transactor[F]
+    Error:(58, 52) type mismatch;
+    found   : example2.FooRepo[F]
+    required: example2.FooRepo[[γ$3$]cats.data.Kleisli[F,natchez.Span[F],γ$3$]]
+     */
     val endpoints = new Endpoints[F](new FooHttpEndpoint[F](fooRepo))
+    /*
+    Error:(59, 61) type mismatch;
+    found   : example2.FooRepo[[γ$3$]cats.data.Kleisli[F,natchez.Span[F],γ$3$]]
+    required: example2.FooRepo[F]
+    val endpoints = new Endpoints[F](new FooHttpEndpoint[F](fooRepo))
+     */
 
     // here you're creating the routes with the effect type being Kleisli[F, Span[F], *] so you
     // then get the right type back to pass in the middleware & don't have to convert anything
     val baseApp: HttpApp[Kleisli[F, Span[F], *]] = routes(endpoints).orNotFound
+    /*
+ Error:(63, 70) type mismatch;
+ found   : cats.data.Kleisli[[_]F[_],org.http4s.Request[[_]F[_]],org.http4s.Response[[_]F[_]]]
+ required: org.http4s.HttpApp[[γ$4$]cats.data.Kleisli[F,natchez.Span[F],γ$4$]]
+    (which expands to)  cats.data.Kleisli[[γ$4$]cats.data.Kleisli[F,natchez.Span[F],γ$4$],org.http4s.Request[[γ$4$]cats.data.Kleisli[F,natchez.Span[F],γ$4$]],org.http4s.Response[[γ$4$]cats.data.Kleisli[F,natchez.Span[F],γ$4$]]]
+     */
     val traceMiddleware: HttpApp[Kleisli[F, Span[F], *]] => HttpApp[F] = TraceMiddleware[F](ep, configuration[F])
     traceMiddleware(baseApp)
   }
