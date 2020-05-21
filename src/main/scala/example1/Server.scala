@@ -47,6 +47,7 @@ class Server {
 
   def app[F[_]: Sync](ep: EntryPoint[F], xa: Transactor[Kleisli[F, Span[F], *]]): HttpApp[F] = {
     val endpoints = getEndpoints(xa)
+    val x = endpoints.foo
 
     // here you're creating the routes with the effect type being Kleisli[F, Span[F], *] so you
     // then get the right type back to pass in the middleware & don't have to convert anything
