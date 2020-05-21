@@ -13,6 +13,7 @@ import org.http4s.implicits._
 import org.http4s.server.Router
 import org.http4s.server.blaze.BlazeServerBuilder
 import org.http4s.{HttpApp, HttpRoutes}
+import scala.concurrent.duration._
 
 object Main extends IOApp {
   override def run(args: List[String]): IO[ExitCode] = (new Server).run[IO]
@@ -38,7 +39,7 @@ class Server {
     )
 
   def entryPointResource[F[_]: Sync]: Resource[F, EntryPoint[F]] =
-    Jaeger.entryPoint[F]("natchez-example") { c =>
+    Jaeger.entryPoint[F]("scala") { c =>
       Sync[F].delay {
         c.withSampler(SamplerConfiguration.fromEnv).withReporter(ReporterConfiguration.fromEnv).getTracer
       }
@@ -56,7 +57,7 @@ class Server {
       xa <- doobie.fakeTransactor[Kleisli[F, Span[F], *]](b).mapK(lower)
     } yield xa
 
-  def app[F[_]: Sync](ep: EntryPoint[F], xa: Transactor[Kleisli[F, Span[F], *]]): HttpApp[F] = {
+  def app[F[_]: Sync: Timer](ep: EntryPoint[F], xa: Transactor[Kleisli[F, Span[F], *]]): HttpApp[F] = {
     val fooRepo: FooRepo[Kleisli[F, Span[F], *]] = new FooRepo(xa)
     val endpoints = new Endpoints(new FooHttpEndpoint(fooRepo))
 
@@ -81,14 +82,26 @@ class Server {
 
 class Endpoints[F[_]](val foo: FooHttpEndpoint[F])
 
-class FooRepo[F[_]: Bracket[*[_], Throwable]](xa: doobie.Transactor[F]) {
-  def findAll(): fs2.Stream[F, Int] = doobie.transact[F, Int](xa) ++ fs2.Stream.emits(Seq(1, 2, 3, 4, 5))
+class FooRepo[F[_]: Bracket[*[_], Throwable]: Timer : Trace](xa: doobie.Transactor[F]) {
+  def findAll(): fs2.Stream[F, Int] =
+    fs2.Stream.sleep_(1.second) *> {
+      doobie.transact[F, Int](xa) ++ fs2.Stream.emits(Seq(1, 2, 3, 4, 5))
+    }
 }
 
-class FooHttpEndpoint[F[_]: Sync](repo: FooRepo[F]) extends Http4sDsl[F] {
-
+class FooHttpEndpoint[F[_]: Sync: Trace: Timer](repo: FooRepo[F]) extends Http4sDsl[F] {
   val service: HttpRoutes[F] = HttpRoutes.of[F] {
     case GET -> Root =>
-      Ok(repo.findAll().compile.toList.map(_.mkString(",")))
+      Trace[F].put("foo" -> TraceValue.boolToTraceValue(true)) *>
+      Timer[F].sleep(100.millis) *>
+      Trace[F].span("responding") {
+        Trace[F].span("db:FooRepo/findAll") {
+          repo.findAll().compile.toList
+        }.flatMap { seq =>
+          Trace[F].span("processing db records") {
+            Timer[F].sleep(200.millis) *> Ok(seq.mkString(","))
+          }
+        }
+      }
   }
 }
