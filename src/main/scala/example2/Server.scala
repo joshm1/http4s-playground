@@ -25,7 +25,8 @@ object doobie {
   def transact[M[_], A](xa: Transactor[M])(implicit ev: Bracket[M, Throwable]): fs2.Stream[M, A] = fs2.Stream.empty
 
   // type signature intentionally similar to doobie's newHikariTransactor
-  def fakeTransactor[M[_]: Async: ContextShift](blocker: Blocker): Resource[M, Transactor[M]] = ???
+  def fakeTransactor[M[_]: Async: ContextShift](blocker: Blocker): Resource[M, Transactor[M]] =
+    Resource.make(Sync[M].pure(new Transactor[M] {}))(_ => Sync[M].unit)
 }
 
 class Server {
@@ -81,13 +82,13 @@ class Server {
 class Endpoints[F[_]](val foo: FooHttpEndpoint[F])
 
 class FooRepo[F[_]: Bracket[*[_], Throwable]](xa: doobie.Transactor[F]) {
-  def findAll(): fs2.Stream[F, Int] = doobie.transact[F, Int](xa)
+  def findAll(): fs2.Stream[F, Int] = doobie.transact[F, Int](xa) ++ fs2.Stream.emits(Seq(1, 2, 3, 4, 5))
 }
 
 class FooHttpEndpoint[F[_]: Sync](repo: FooRepo[F]) extends Http4sDsl[F] {
 
   val service: HttpRoutes[F] = HttpRoutes.of[F] {
-    case GET -> / =>
+    case GET -> Root =>
       Ok(repo.findAll().compile.toList.map(_.mkString(",")))
   }
 }
