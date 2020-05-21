@@ -1,9 +1,8 @@
-import java.util.concurrent.atomic.AtomicInteger
+package example1
 
-import cats.data.{Kleisli, OptionT}
-import cats.effect.{Bracket, ConcurrentEffect, ExitCode, IO, IOApp, Resource, Sync, Timer}
+import cats.data.Kleisli
+import cats.effect.{ConcurrentEffect, ExitCode, IO, IOApp, Resource, Sync, Timer}
 import cats.implicits._
-import cats.~>
 import com.ovoenergy.effect.natchez.http4s.server.{Configuration, TraceMiddleware}
 import io.jaegertracing.Configuration.{ReporterConfiguration, SamplerConfiguration}
 import natchez._
@@ -20,18 +19,9 @@ object Main extends IOApp {
 
 class Server {
 
-  def _routesWorkingExample[F[_]: Sync]: HttpRoutes[F] = {
-    object dsl extends Http4sDsl[F];
-    import dsl._
-    HttpRoutes.of[F] {
-      case GET -> Root / "hello" / name => Ok(name)
-    }
-  }
-
-  def _routesBetterExampleOfRealUseCase[F[_]: Sync](endpoints: Endpoints[F]): HttpRoutes[F] =
+  def routes[F[_]: Sync](endpoints: Endpoints[F]): HttpRoutes[F] =
     Router(
       "/foo" -> endpoints.foo.service,
-      "/bar" -> endpoints.bar.service,
     )
 
   def entryPointResource[F[_]: Sync]: Resource[F, EntryPoint[F]] =
@@ -52,8 +42,7 @@ class Server {
 
   def getEndpoints[F[_]: Sync](xa: Transactor[F]): Endpoints[F] =
     new Endpoints[F](
-      new FooHttpEndpoint[F](xa),
-      new BarHttpEndpoint[F](xa)
+      new FooHttpEndpoint[F](xa)
     )
 
   def app[F[_]: Sync](ep: EntryPoint[F], xa: Transactor[Kleisli[F, Span[F], *]]): HttpApp[F] = {
@@ -61,7 +50,7 @@ class Server {
 
     // here you're creating the routes with the effect type being Kleisli[F, Span[F], *] so you
     // then get the right type back to pass in the middleware & don't have to convert anything
-    val baseApp: HttpApp[Kleisli[F, Span[F], *]] = _routesBetterExampleOfRealUseCase(endpoints).orNotFound
+    val baseApp: HttpApp[Kleisli[F, Span[F], *]] = routes(endpoints).orNotFound
     val traceMiddleware: HttpApp[Kleisli[F, Span[F], *]] => HttpApp[F] = TraceMiddleware[F](ep, configuration[F])
     traceMiddleware(baseApp)
   }
@@ -83,33 +72,12 @@ trait Transactor[F[_]] {
 }
 
 class Endpoints[F[_]](
-    val foo: FooHttpEndpoint[F],
-    val bar: BarHttpEndpoint[F]
+    val foo: FooHttpEndpoint[F]
 )
 
 class FooHttpEndpoint[F[_]: Sync](xa: Transactor[F]) extends Http4sDsl[F] {
 
   val service: HttpRoutes[F] = HttpRoutes.of[F] {
     case GET -> / => xa.test.flatMap(i => Ok(s"foo ${i}"))
-  }
-}
-
-// this may work, but would require a ton of work across the applications to change the way dependencies
-// are injected across all of my classes (hoping not to have to do this initially), and is a bit messier
-class DifferentFooHttpEndpoint {
-
-  def service[F[_]: Sync](xa: Transactor[F]): HttpRoutes[F] = {
-    object dsl extends Http4sDsl[F]
-    import dsl._
-    HttpRoutes.of[F] {
-      case GET -> / => xa.test.flatMap(i => Ok(s"fixed foo ${i}"))
-    }
-  }
-}
-
-class BarHttpEndpoint[F[_]: Sync](xa: Transactor[F]) extends Http4sDsl[F] {
-
-  val service: HttpRoutes[F] = HttpRoutes.of[F] {
-    case GET -> / => xa.test.flatMap(i => Ok(s"bar ${i}"))
   }
 }
