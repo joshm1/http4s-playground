@@ -1,33 +1,21 @@
 package example3
 
 import cats.data.Kleisli
-import cats.effect.{
-  Async,
-  Blocker,
-  Bracket,
-  Concurrent,
-  ConcurrentEffect,
-  ContextShift,
-  ExitCode,
-  IO,
-  IOApp,
-  Resource,
-  Sync,
-  Timer
-}
+import cats.effect.{Async, Blocker, Bracket, Clock, Concurrent, ConcurrentEffect, ContextShift, ExitCode, IO, IOApp, Resource, Sync, Timer}
 import cats.implicits._
 import cats.~>
-import com.ovoenergy.effect.natchez.http4s.server.{ Configuration, TraceMiddleware }
+import com.ovoenergy.effect.natchez.Datadog
+import com.ovoenergy.effect.natchez.http4s.server.{Configuration, TraceMiddleware}
 import fs2.concurrent.Queue
-import io.jaegertracing.Configuration.{ ReporterConfiguration, SamplerConfiguration }
 import natchez._
-import natchez.jaeger.Jaeger
+import org.http4s.client.blaze.BlazeClientBuilder
 import org.http4s.dsl.Http4sDsl
 import org.http4s.implicits._
 import org.http4s.server.Router
 import org.http4s.server.blaze.BlazeServerBuilder
-import org.http4s.{ HttpApp, HttpRoutes }
+import org.http4s.{HttpApp, HttpRoutes}
 
+import scala.concurrent.ExecutionContext
 import scala.concurrent.duration._
 
 object Main extends IOApp {
@@ -58,12 +46,15 @@ class Server {
       "/foo" -> endpoints.foo.service,
     )
 
-  def entryPointResource[F[_]: Sync]: Resource[F, EntryPoint[F]] =
-    Jaeger.entryPoint[F]("scala") { c =>
-      Sync[F].delay {
-        c.withSampler(SamplerConfiguration.fromEnv).withReporter(ReporterConfiguration.fromEnv).getTracer
-      }
+  def entryPointResource[F[_]: Clock: ConcurrentEffect: Timer]: Resource[F, EntryPoint[F]] =
+    BlazeClientBuilder(ExecutionContext.global).resource.flatMap { client =>
+      Datadog.entryPoint[F](client, "test", "test")
     }
+    //    Jaeger.entryPoint[F]("scala") { c =>
+    //      Sync[F].delay {
+    //        c.withSampler(SamplerConfiguration.fromEnv).withReporter(ReporterConfiguration.fromEnv).getTracer
+    //      }
+    //    }
 
   def configuration[F[_]: Sync]: Configuration[F] = Configuration.default()
 
@@ -100,26 +91,12 @@ class Server {
       queue <- fs2.Stream.eval(buildQueue[F, TraceF[F, *], Int])
 
       blazeStream = blazeServer[F](app(entryPoint, xa, queue)).void
-      kafkaModule = new KafkaModule(queue)
-      /*
-Error:(103, 21) Cannot find implicit value for ConcurrentEffect[[β$10$]cats.data.Kleisli[F,natchez.Span[F],β$10$]].
-Building this implicit value might depend on having an implicit
-s.c.ExecutionContext in scope, a Scheduler, a ContextShift[[β$10$]cats.data.Kleisli[F,natchez.Span[F],β$10$]]
-or some equivalent type.
-       */
-      kafkaProducerStream = kafkaModule.getProducerStream
 
       _ <- fs2.Stream(
         blazeStream,
-        kafkaProducerStream
       ).parJoinUnbounded
     } yield ExitCode.Success
   }.compile.lastOrError
-}
-
-class KafkaModule[F[_]: ConcurrentEffect: ContextShift](queue: Queue[F, Int]) {
-  // pretend this uses fs2-kafka, which requires ConcurrentEffect and ContextShift
-  def getProducerStream: fs2.Stream[F, Int] = queue.dequeue
 }
 
 class Endpoints[F[_]](val foo: FooHttpEndpoint[F])
